@@ -44,14 +44,13 @@ fn main() -> anyhow::Result<()> {
         Command::Start(_) => {
             // Merge: config file < env < CLI
             let resolved = config::merge_into_config(cli, &matches, file_config);
-            init_logging(&resolved.log_level, resolved.log_file.as_deref());
+            init_logging(&resolved.log_targets);
             run_start(resolved.config)
         }
         Command::Cleanup => {
-            let log_level = config::resolve_log_level(&cli, &matches, file_config.as_ref());
-            let log_file = config::resolve_log_file(&cli, &matches, file_config.as_ref());
+            let log_targets = config::resolve_log_targets(&cli, &matches, file_config.as_ref());
             let state_file = config::resolve_state_file(&cli, &matches, file_config.as_ref());
-            init_logging(&log_level, log_file.as_deref());
+            init_logging(&log_targets);
             run_cleanup(&state_file)
         }
         Command::Status => {
@@ -71,46 +70,81 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Initialize tracing with the given log level, suppressing noisy arti internals.
-/// When `log_file` is provided, writes to that file with ANSI colors disabled.
-fn init_logging(log_level: &str, log_file: Option<&std::path::Path>) {
+/// Initialize tracing with one or more log targets, each with its own level.
+/// Supports simultaneous logging to stderr, stdout, and/or files.
+fn init_logging(targets: &[config::LogTarget]) {
     use time::macros::format_description;
     use tracing_subscriber::fmt::time::UtcTime;
-
-    let filter_str = format!(
-        "{log_level},tor_guardmgr=error,tor_chanmgr=error,tor_circmgr=error,tor_proto=error,tor_netdir=error,tor_ptmgr=error"
-    );
-    let env_filter = tracing_subscriber::EnvFilter::try_new(&filter_str)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
 
     // Short HH:MM:SS timestamp — log lives one session, date is unnecessary
-    let timer = UtcTime::new(format_description!("[hour]:[minute]:[second]"));
+    let make_timer = || UtcTime::new(format_description!("[hour]:[minute]:[second]"));
 
-    if let Some(path) = log_file {
-        // Use safe_create_file to prevent symlink-following attacks:
-        // the log path is predictable (/tmp/tor-vpn-daemon.log) and the
-        // daemon runs as root, so a symlink would clobber arbitrary files.
-        match state::safe_create_file(path) {
-            Ok(file) => {
-                tracing_subscriber::fmt()
-                    .with_env_filter(env_filter)
-                    .with_timer(timer)
-                    .with_writer(file)
-                    .with_ansi(false)
-                    .init();
-                return;
+    let make_filter = |level: &str| {
+        let s = format!(
+            "{level},tor_guardmgr=error,tor_chanmgr=error,tor_circmgr=error,\
+             tor_proto=error,tor_netdir=error,tor_ptmgr=error"
+        );
+        tracing_subscriber::EnvFilter::try_new(&s)
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
+
+    let mut layers: Vec<Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync>> = Vec::new();
+
+    for target in targets {
+        let filter = make_filter(&target.level);
+        match &target.destination {
+            config::LogDestination::Stderr => {
+                layers.push(Box::new(
+                    tracing_subscriber::fmt::layer()
+                        .with_timer(make_timer())
+                        .with_writer(std::io::stderr)
+                        .with_filter(filter),
+                ));
             }
-            Err(e) => {
-                eprintln!("Warning: failed to open log file {}: {e}", path.display());
-                // Fall through to stderr
+            config::LogDestination::Stdout => {
+                layers.push(Box::new(
+                    tracing_subscriber::fmt::layer()
+                        .with_timer(make_timer())
+                        .with_writer(std::io::stdout)
+                        .with_filter(filter),
+                ));
+            }
+            config::LogDestination::File(path) => {
+                // Use safe_create_file to prevent symlink-following attacks:
+                // the log path is predictable (/tmp/tor-vpn-daemon.log) and the
+                // daemon runs as root, so a symlink would clobber arbitrary files.
+                match state::safe_create_file(path) {
+                    Ok(file) => {
+                        layers.push(Box::new(
+                            tracing_subscriber::fmt::layer()
+                                .with_timer(make_timer())
+                                .with_writer(std::sync::Mutex::new(file))
+                                .with_ansi(false)
+                                .with_filter(filter),
+                        ));
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: failed to open log file {}: {e}", path.display());
+                    }
+                }
             }
         }
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_timer(timer)
-        .init();
+    // Fallback if all targets failed (e.g., all file opens failed)
+    if layers.is_empty() {
+        layers.push(Box::new(
+            tracing_subscriber::fmt::layer()
+                .with_timer(make_timer())
+                .with_writer(std::io::stderr)
+                .with_filter(make_filter("info")),
+        ));
+    }
+
+    tracing_subscriber::registry().with(layers).init();
 }
 
 /// Verify the process is running with elevated privileges (root on Unix, Administrator on Windows).

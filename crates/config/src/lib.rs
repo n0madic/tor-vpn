@@ -725,6 +725,15 @@ mod tests {
         };
         let content = original.to_config_content(Path::new("/tmp/roundtrip.log"));
         let parsed = parse_config_content(&content, Path::new("<test>")).unwrap();
+
+        // Verify Log directive roundtrip
+        assert_eq!(parsed.log_targets.len(), 1);
+        assert_eq!(parsed.log_targets[0].level, "info");
+        assert!(matches!(
+            parsed.log_targets[0].destination,
+            LogDestination::File(_)
+        ));
+
         let restored = Config::from(parsed);
 
         assert_eq!(restored.tun_name, original.tun_name);

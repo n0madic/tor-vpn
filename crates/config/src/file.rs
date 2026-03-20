@@ -7,6 +7,21 @@ use clap::ArgMatches;
 
 use crate::{parse_cidr, parse_country_code, Cli, Command, Config, IsolationPolicy};
 
+/// Where a `Log` directive sends output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogDestination {
+    Stderr,
+    Stdout,
+    File(PathBuf),
+}
+
+/// A single `Log` directive: severity + destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogTarget {
+    pub level: String,
+    pub destination: LogDestination,
+}
+
 /// Error from parsing a config file, with file path and line number.
 #[derive(Debug)]
 pub struct ConfigFileError {
@@ -38,8 +53,7 @@ impl std::error::Error for ConfigFileError {}
 #[derive(Debug, Default)]
 pub struct ConfigFile {
     // Global
-    pub log_level: Option<String>,
-    pub log_file: Option<PathBuf>,
+    pub log_targets: Vec<LogTarget>,
     pub state_file: Option<PathBuf>,
     pub socket_path: Option<PathBuf>,
     pub state_write_interval: Option<u32>,
@@ -65,8 +79,7 @@ pub struct ConfigFile {
 
 /// Result of merging CLI args with config file values.
 pub struct ResolvedConfig {
-    pub log_level: String,
-    pub log_file: Option<PathBuf>,
+    pub log_targets: Vec<LogTarget>,
     pub config: Config,
 }
 
@@ -224,7 +237,7 @@ pub fn parse_config_content(content: &str, path: &Path) -> Result<ConfigFile, Co
     Ok(config)
 }
 
-/// Parse `Log <severity> [stdout|stderr]` directive.
+/// Parse `Log <severity> [stdout|stderr|file /path]` directive.
 fn parse_log_directive(
     value: &str,
     config: &mut ConfigFile,
@@ -238,7 +251,7 @@ fn parse_log_directive(
         None => (value, "stderr"),
     };
 
-    if destination.starts_with("file ") || destination.starts_with("file\t") {
+    let log_dest = if destination.starts_with("file ") || destination.starts_with("file\t") {
         let file_path = destination["file".len()..].trim();
         if file_path.is_empty() {
             return Err(err(
@@ -247,10 +260,11 @@ fn parse_log_directive(
                 "Log file destination requires a path: Log <severity> file /path/to/log",
             ));
         }
-        config.log_file = Some(PathBuf::from(file_path));
+        LogDestination::File(PathBuf::from(file_path))
     } else {
         match destination {
-            "stdout" | "stderr" => {}
+            "stderr" => LogDestination::Stderr,
+            "stdout" => LogDestination::Stdout,
             _ => {
                 return Err(err(
                     path,
@@ -261,7 +275,7 @@ fn parse_log_directive(
                 ));
             }
         }
-    }
+    };
 
     // Map torrc severity names to tracing levels
     // torrc: debug, info, notice, warn, err
@@ -272,7 +286,10 @@ fn parse_log_directive(
         _ => severity, // debug, info, warn pass through as-is
     };
 
-    config.log_level = Some(mapped.to_string());
+    config.log_targets.push(LogTarget {
+        level: mapped.to_string(),
+        destination: log_dest,
+    });
     Ok(())
 }
 
@@ -399,21 +416,31 @@ pub fn merge_into_config(
     let global_set = |id: &str| -> bool { was_set(matches, id) };
     let start_set = |id: &str| -> bool { sub_matches.is_some_and(|m| was_set(m, id)) };
 
-    // Resolve global fields
-    let log_level = if global_set("log_level") {
-        cli.log_level
+    // Resolve log targets: CLI --log-level/--log-file override config file Log directives
+    let log_targets = if global_set("log_level") || global_set("log_file") {
+        let level = cli.log_level;
+        let dest = match cli.log_file {
+            Some(path) => LogDestination::File(path),
+            None => LogDestination::Stderr,
+        };
+        vec![LogTarget {
+            level,
+            destination: dest,
+        }]
+    } else if !file.log_targets.is_empty() {
+        file.log_targets
     } else {
-        file.log_level.unwrap_or(cli.log_level)
+        vec![LogTarget {
+            level: cli.log_level,
+            destination: LogDestination::Stderr,
+        }]
     };
+
+    // Resolve global fields
     let state_file = if global_set("state_file") {
         cli.state_file
     } else {
         file.state_file.unwrap_or(cli.state_file)
-    };
-    let log_file = if global_set("log_file") {
-        cli.log_file
-    } else {
-        file.log_file.or(cli.log_file)
     };
     let socket_path = if global_set("socket_path") {
         cli.socket_path
@@ -503,19 +530,34 @@ pub fn merge_into_config(
     };
 
     ResolvedConfig {
-        log_level,
-        log_file,
+        log_targets,
         config,
     }
 }
 
-/// Resolve log_level for the Cleanup path (no StartArgs available).
-pub fn resolve_log_level(cli: &Cli, matches: &ArgMatches, file: Option<&ConfigFile>) -> String {
-    if was_set(matches, "log_level") {
-        cli.log_level.clone()
+/// Resolve log targets for non-Start paths (Cleanup).
+pub fn resolve_log_targets(
+    cli: &Cli,
+    matches: &ArgMatches,
+    file: Option<&ConfigFile>,
+) -> Vec<LogTarget> {
+    if was_set(matches, "log_level") || was_set(matches, "log_file") {
+        let level = cli.log_level.clone();
+        let dest = match &cli.log_file {
+            Some(p) => LogDestination::File(p.clone()),
+            None => LogDestination::Stderr,
+        };
+        vec![LogTarget {
+            level,
+            destination: dest,
+        }]
+    } else if let Some(targets) = file.map(|f| &f.log_targets).filter(|t| !t.is_empty()) {
+        targets.clone()
     } else {
-        file.and_then(|f| f.log_level.clone())
-            .unwrap_or_else(|| cli.log_level.clone())
+        vec![LogTarget {
+            level: cli.log_level.clone(),
+            destination: LogDestination::Stderr,
+        }]
     }
 }
 
@@ -539,20 +581,6 @@ pub fn resolve_socket_path(cli: &Cli, matches: &ArgMatches, file: Option<&Config
     }
 }
 
-/// Resolve log_file for non-Start paths (Cleanup).
-pub fn resolve_log_file(
-    cli: &Cli,
-    matches: &ArgMatches,
-    file: Option<&ConfigFile>,
-) -> Option<PathBuf> {
-    if was_set(matches, "log_file") {
-        cli.log_file.clone()
-    } else {
-        file.and_then(|f| f.log_file.clone())
-            .or(cli.log_file.clone())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -571,7 +599,7 @@ mod tests {
     #[test]
     fn test_empty_file() {
         let config = parse("").unwrap();
-        assert!(config.log_level.is_none());
+        assert!(config.log_targets.is_empty());
         assert!(config.bridges.is_empty());
     }
 
@@ -726,26 +754,36 @@ mod tests {
     #[test]
     fn test_log_with_destination() {
         let config = parse("Log debug stderr").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("debug"));
+        assert_eq!(config.log_targets.len(), 1);
+        assert_eq!(config.log_targets[0].level, "debug");
+        assert_eq!(config.log_targets[0].destination, LogDestination::Stderr);
     }
 
     #[test]
     fn test_log_stdout() {
         let config = parse("Log info stdout").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("info"));
+        assert_eq!(config.log_targets.len(), 1);
+        assert_eq!(config.log_targets[0].level, "info");
+        assert_eq!(config.log_targets[0].destination, LogDestination::Stdout);
     }
 
     #[test]
     fn test_log_without_destination() {
         let config = parse("Log warn").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("warn"));
+        assert_eq!(config.log_targets.len(), 1);
+        assert_eq!(config.log_targets[0].level, "warn");
+        assert_eq!(config.log_targets[0].destination, LogDestination::Stderr);
     }
 
     #[test]
     fn test_log_file_destination() {
         let config = parse("Log notice file /var/log/tor-vpn.log").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("info")); // notice -> info
-        assert_eq!(config.log_file, Some(PathBuf::from("/var/log/tor-vpn.log")));
+        assert_eq!(config.log_targets.len(), 1);
+        assert_eq!(config.log_targets[0].level, "info"); // notice -> info
+        assert_eq!(
+            config.log_targets[0].destination,
+            LogDestination::File(PathBuf::from("/var/log/tor-vpn.log"))
+        );
     }
 
     #[test]
@@ -758,26 +796,46 @@ mod tests {
     fn test_log_torrc_severity_mapping() {
         // notice -> info
         let config = parse("Log notice stderr").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("info"));
+        assert_eq!(config.log_targets[0].level, "info");
         // err -> error
         let config = parse("Log err stderr").unwrap();
-        assert_eq!(config.log_level.as_deref(), Some("error"));
+        assert_eq!(config.log_targets[0].level, "error");
         // debug, info, warn pass through
         assert_eq!(
-            parse("Log debug stderr").unwrap().log_level.as_deref(),
-            Some("debug")
+            parse("Log debug stderr").unwrap().log_targets[0].level,
+            "debug"
         );
     }
 
     #[test]
     fn test_log_file_does_not_set_log_file_for_stderr() {
         let config = parse("Log debug stderr").unwrap();
-        assert!(config.log_file.is_none());
+        assert_eq!(config.log_targets[0].destination, LogDestination::Stderr);
     }
 
     #[test]
     fn test_log_invalid_destination() {
         assert!(parse("Log info /var/log/tor.log").is_err());
+    }
+
+    #[test]
+    fn test_log_multiple_targets() {
+        let config = parse("Log info stderr\nLog debug file /var/log/tor-vpn.log").unwrap();
+        assert_eq!(config.log_targets.len(), 2);
+        assert_eq!(
+            config.log_targets[0],
+            LogTarget {
+                level: "info".into(),
+                destination: LogDestination::Stderr,
+            }
+        );
+        assert_eq!(
+            config.log_targets[1],
+            LogTarget {
+                level: "debug".into(),
+                destination: LogDestination::File("/var/log/tor-vpn.log".into()),
+            }
+        );
     }
 
     #[test]
@@ -956,7 +1014,8 @@ UseBridges 1
         assert_eq!(config.dns_cache_ttl, Some(300));
         assert_eq!(config.override_dns, Some(true));
         assert_eq!(config.exit_country.as_deref(), Some("DE"));
-        assert_eq!(config.log_level.as_deref(), Some("debug"));
+        assert_eq!(config.log_targets.len(), 1);
+        assert_eq!(config.log_targets[0].level, "debug");
         assert_eq!(config.state_file, Some(PathBuf::from("/tmp/state.json")));
         assert_eq!(
             config.socket_path,
@@ -993,14 +1052,17 @@ UseBridges 1
         let cli = Cli::from_arg_matches(&matches).unwrap();
         let file = ConfigFile {
             tun_mtu: Some(1400),
-            log_level: Some("warn".to_string()),
+            log_targets: vec![LogTarget {
+                level: "warn".into(),
+                destination: LogDestination::Stderr,
+            }],
             max_connections: Some(512),
             ..Default::default()
         };
 
         let resolved = merge_into_config(cli, &matches, Some(file));
         assert_eq!(resolved.config.tun_mtu, 9000); // CLI wins
-        assert_eq!(resolved.log_level, "debug"); // CLI wins
+        assert_eq!(resolved.log_targets[0].level, "debug"); // CLI wins
         assert_eq!(resolved.config.max_connections, 512); // config file wins over default
     }
 
