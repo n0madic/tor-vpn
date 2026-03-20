@@ -2,10 +2,10 @@
 //!
 //! - macOS: native SystemConfiguration API (service detection, DNS get/set)
 //! - Linux: resolvectl → resolvconf → /etc/resolv.conf fallback chain
-//! - Windows: netsh + netdev
+//! - Windows: DNS override disabled (.onion blocked at dnsapi.dll level)
 
-// Command is used on Linux (resolvconf) and Windows (netsh) but not macOS.
-#[cfg(not(target_os = "macos"))]
+// Command is used on Linux (resolvconf) but not macOS or Windows.
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 // --- Linux DNS configuration helpers ---
@@ -63,46 +63,6 @@ pub(super) fn configure_resolvconf_dns(tun_name: &str, dns_ip: &str) -> bool {
         })
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-// --- Windows DNS ---
-
-/// Get the current DNS configuration for a network interface on Windows.
-///
-/// Uses `netdev` to query the default interface's DNS servers.
-/// Falls back to `netsh interface ip show dns` if netdev returns empty.
-#[cfg(target_os = "windows")]
-pub(super) fn get_current_dns_windows(tun_name: &str) -> anyhow::Result<String> {
-    // Try netdev first — native API via GetAdaptersAddresses
-    if let Ok(iface) = netdev::interface::get_default_interface() {
-        if !iface.dns_servers.is_empty() {
-            return Ok(iface
-                .dns_servers
-                .iter()
-                .map(|ip| ip.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"));
-        }
-    }
-
-    // Fallback: netsh
-    let output = Command::new("netsh")
-        .args([
-            "interface",
-            "ip",
-            "show",
-            "dns",
-            &format!("name={tun_name}"),
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to get DNS via netsh: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("netsh DNS query failed: {stderr}"));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 // --- macOS network service detection ---
@@ -384,23 +344,10 @@ pub fn restore_dns_settings(
         }
     }
 
+    // Windows: DNS override not used, nothing to restore.
     #[cfg(target_os = "windows")]
-    if dns_method == Some("netsh") {
-        // Restore DNS to DHCP (automatic) on the TUN interface.
-        // Unlike resolvectl, netsh does NOT auto-revert when the interface is removed,
-        // so explicit cleanup is required even after force-kill.
-        let _ = super::run_cmd(
-            "netsh",
-            &[
-                "interface",
-                "ip",
-                "set",
-                "dns",
-                &format!("name={tun_name}"),
-                "dhcp",
-            ],
-        );
-        tracing::info!("DNS restored via netsh (set to DHCP)");
+    {
+        let _ = (dns_method, tun_name);
     }
 
     Ok(())

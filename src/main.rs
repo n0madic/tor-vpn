@@ -23,6 +23,7 @@ enum SessionOutcome {
 struct CachedSession {
     gateway_ip: std::net::IpAddr,
     interface: String,
+    if_index: u32,
     guard_ips: Vec<std::net::IpAddr>,
 }
 
@@ -242,6 +243,7 @@ fn build_ipc_status(
         tun_name: mgr.tun_name().to_string(),
         original_gateway: mgr.original_gateway().to_string(),
         original_interface: mgr.original_interface().to_string(),
+        original_if_index: mgr.original_if_index(),
         guard_ips: mgr.guard_ips().to_vec(),
         bypass_cidrs: mgr.bypass_cidrs().to_vec(),
         dns_service_name: mgr.dns_service_name().map(|s| s.to_string()),
@@ -500,6 +502,7 @@ async fn run_vpn_session(
             config.state_file.clone(),
             cache.gateway_ip,
             &cache.interface,
+            cache.if_index,
         )?
     } else {
         routing::NetworkController::new(
@@ -540,6 +543,13 @@ async fn run_vpn_session(
     let has_pt_bridges = !tor_manager.resolved_pt_paths().is_empty();
 
     // --- Phase 4+5: Warmup, detect guards, install routes ---
+    // Windows: DNS override disabled — Windows DNS Client blocks .onion at the API
+    // level (RFC 7686) regardless of system DNS settings, and netsh DNS changes are
+    // fragile (don't auto-revert on crash). Regular DNS queries go through the TUN
+    // device and are resolved via Tor without needing system DNS changes.
+    #[cfg(target_os = "windows")]
+    let dns_ip: Option<std::net::Ipv4Addr> = None;
+    #[cfg(not(target_os = "windows"))]
     let dns_ip = if config.override_dns {
         Some(derive_dns_ip(config.tun_address, config.tun_netmask)?)
     } else {
@@ -707,6 +717,14 @@ async fn run_vpn_session(
     let onion_map: OnionMap = dns::new_onion_map();
     let dns_cache: DnsCache = dns::new_dns_cache(config.dns_cache_ttl);
     let bw = Arc::new(bandwidth::BandwidthStats::new());
+
+    #[cfg(target_os = "windows")]
+    if config.override_dns {
+        tracing::warn!(
+            "--override-dns has no effect on Windows — \
+             the Windows DNS Client blocks .onion queries per RFC 7686 at the API level"
+        );
+    }
 
     let restart_notify = Arc::new(tokio::sync::Notify::new());
 
@@ -900,6 +918,7 @@ async fn run_vpn_session(
         Some(CachedSession {
             gateway_ip: mgr.original_gateway(),
             interface: mgr.original_interface().to_string(),
+            if_index: mgr.original_if_index(),
             guard_ips: mgr.guard_ips().to_vec(),
         })
     };
@@ -973,6 +992,7 @@ fn detect_time_jump(
 }
 
 /// Derive the DNS intercept IP from the TUN address (next IP in subnet).
+#[cfg(not(target_os = "windows"))]
 fn derive_dns_ip(
     tun_addr: std::net::Ipv4Addr,
     prefix_len: u8,
@@ -1083,39 +1103,46 @@ mod tests {
         assert_eq!(result.unwrap().as_secs(), 16);
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_normal() {
         let ip = derive_dns_ip("10.200.0.1".parse().unwrap(), 24).unwrap();
         assert_eq!(ip, "10.200.0.2".parse::<std::net::Ipv4Addr>().unwrap());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_zero() {
         let ip = derive_dns_ip("10.200.0.0".parse().unwrap(), 24).unwrap();
         assert_eq!(ip, "10.200.0.1".parse::<std::net::Ipv4Addr>().unwrap());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_255_fails() {
         assert!(derive_dns_ip("10.200.0.255".parse().unwrap(), 24).is_err());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_broadcast_detection() {
         assert!(derive_dns_ip("10.200.0.254".parse().unwrap(), 24).is_err());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_slash30_valid() {
         let ip = derive_dns_ip("10.200.0.1".parse().unwrap(), 30).unwrap();
         assert_eq!(ip, "10.200.0.2".parse::<std::net::Ipv4Addr>().unwrap());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_slash30_broadcast() {
         assert!(derive_dns_ip("10.200.0.2".parse().unwrap(), 30).is_err());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_derive_dns_ip_crosses_subnet() {
         assert!(derive_dns_ip("10.200.0.255".parse().unwrap(), 25).is_err());

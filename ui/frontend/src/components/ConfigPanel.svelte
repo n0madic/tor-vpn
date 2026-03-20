@@ -4,6 +4,7 @@
   import type { UiConfig } from "../lib/types";
 
   const isMacOS = navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Mac OS");
+  const isWindows = navigator.platform.startsWith("Win") || navigator.userAgent.includes("Windows");
 
   let saving = $state(false);
   let saveMessage = $state("");
@@ -90,9 +91,9 @@
         </select>
       </label>
 
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={local.override_dns} />
-        <span>Override system DNS (prevents DoH bypass)</span>
+      <label class="checkbox" title={isWindows ? "Not available on Windows — .onion is blocked at the OS level" : ""}>
+        <input type="checkbox" bind:checked={local.override_dns} disabled={isWindows} />
+        <span>{isWindows ? "Override DNS (not available on Windows)" : "Override system DNS (prevents DoH bypass)"}</span>
       </label>
 
       <label class="checkbox">

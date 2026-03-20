@@ -1,5 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(unix)]
+use std::process::Stdio;
 
 use std::path::PathBuf;
 
@@ -363,6 +365,7 @@ fn privileged_kill(pid: u32, signal: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Result of checking a child process during the polling loop.
+#[allow(dead_code)]
 enum ChildStatus {
     /// Child is still running.
     Running,
@@ -581,7 +584,7 @@ fn spawn_privileged_and_wait(program: &str, args: &[&str]) -> Result<(), String>
         .args([
             "-Command",
             &format!(
-                "Start-Process '{}' -ArgumentList '{}' -Verb RunAs",
+                "Start-Process '{}' -ArgumentList '{}' -Verb RunAs -WindowStyle Hidden",
                 program.replace('\'', "''"),
                 args_str
             ),
@@ -609,7 +612,7 @@ fn spawn_privileged_blocking(program: &str, args: &[&str]) -> Result<(), String>
         .args([
             "-Command",
             &format!(
-                "Start-Process '{}' -ArgumentList '{}' -Verb RunAs -Wait",
+                "Start-Process '{}' -ArgumentList '{}' -Verb RunAs -WindowStyle Hidden -Wait",
                 program.replace('\'', "''"),
                 args_str
             ),
@@ -649,6 +652,7 @@ fn windows_escape_args(args: &[&str]) -> String {
 /// Always single-quotes unless the string is purely safe characters
 /// (alphanumeric, `.`, `/`, `-`, `_`, `:`). This prevents injection via
 /// shell metacharacters like `;`, `|`, `$()`, backticks, etc.
+#[cfg(target_os = "macos")]
 fn shell_escape(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();

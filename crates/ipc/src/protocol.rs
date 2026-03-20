@@ -91,6 +91,7 @@ mod tests {
             tun_name: "utun7".into(),
             original_gateway: "192.168.1.1".into(),
             original_interface: "en0".into(),
+            original_if_index: 0,
             guard_ips: vec!["1.2.3.4".parse().unwrap()],
             bypass_cidrs: vec![],
             dns_service_name: None,

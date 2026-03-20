@@ -77,7 +77,7 @@ pub fn send(pipe_path: &Path, request: &Request, timeout: Duration) -> anyhow::R
     // pipes don't support set_read_timeout on File handles.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut reader = BufReader::new(file);
+        let reader = BufReader::new(file);
         let mut line = String::new();
         // Bound the read to prevent memory exhaustion from a malicious pipe
         let result = reader

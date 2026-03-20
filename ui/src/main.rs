@@ -4,6 +4,7 @@ mod config;
 mod daemon;
 mod tray;
 
+#[cfg(target_os = "macos")]
 use tauri::Manager;
 
 fn main() {

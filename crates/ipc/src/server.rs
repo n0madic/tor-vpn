@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
@@ -226,7 +226,7 @@ fn is_authorized(peer_uid: Option<u32>, owner_uid: Option<u32>) -> bool {
 /// file, symlink, directory, etc.) to prevent use as an arbitrary file-deletion
 /// primitive when the socket path is user-configurable.
 #[cfg(unix)]
-fn cleanup_stale_socket(path: &Path) {
+fn cleanup_stale_socket(path: &std::path::Path) {
     use std::os::unix::fs::FileTypeExt;
 
     let meta = match std::fs::symlink_metadata(path) {

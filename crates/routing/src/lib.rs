@@ -21,6 +21,10 @@ pub struct NetworkController {
     route_mgr: route_manager::RouteManager,
     original_gateway: IpAddr,
     original_interface: String,
+    /// Interface index of the original default gateway interface.
+    /// Required on Windows where `CreateIpForwardEntry2` needs a valid
+    /// `InterfaceIndex` (gateway IP alone is not sufficient).
+    original_if_index: u32,
     tun_name: String,
     guard_ips: Vec<IpAddr>,
     bypass_cidrs: Vec<String>,
@@ -52,7 +56,7 @@ impl NetworkController {
         bypass_cidrs: Vec<String>,
         state_file: PathBuf,
     ) -> anyhow::Result<Self> {
-        let (gateway, interface) = detect_default_gateway_with_retry()?;
+        let (gateway, interface, if_index) = detect_default_gateway_with_retry()?;
         tracing::info!(
             gateway = %gateway,
             interface = %interface,
@@ -71,6 +75,7 @@ impl NetworkController {
             route_mgr,
             original_gateway: gateway,
             original_interface: interface,
+            original_if_index: if_index,
             tun_name,
             guard_ips: Vec::new(),
             bypass_cidrs,
@@ -102,23 +107,24 @@ impl NetworkController {
         state_file: PathBuf,
         hint_gateway: IpAddr,
         hint_interface: &str,
+        hint_if_index: u32,
     ) -> anyhow::Result<Self> {
-        let (gateway, interface) = match detect_default_gateway() {
-            Ok((gw, iface)) if gw == hint_gateway && iface == hint_interface => {
+        let (gateway, interface, if_index) = match detect_default_gateway() {
+            Ok((gw, iface, idx)) if gw == hint_gateway && iface == hint_interface => {
                 tracing::info!(
                     gateway = %gw,
                     interface = %iface,
                     "Reusing cached gateway (validated)"
                 );
-                (gw, iface)
+                (gw, iface, idx)
             }
-            Ok((gw, iface)) => {
+            Ok((gw, iface, idx)) => {
                 tracing::info!(
                     old_gw = %hint_gateway, old_iface = %hint_interface,
                     new_gw = %gw, new_iface = %iface,
                     "Gateway changed since last session"
                 );
-                (gw, iface)
+                (gw, iface, idx)
             }
             Err(e) => {
                 tracing::debug!(error = %e, "Gateway hint validation failed, retrying...");
@@ -165,7 +171,7 @@ impl NetworkController {
                                     error = %retry_err,
                                     "Network unavailable, trusting cached gateway hint"
                                 );
-                                (hint_gateway, hint_interface.to_string())
+                                (hint_gateway, hint_interface.to_string(), hint_if_index)
                             }
                         }
                     }
@@ -185,6 +191,7 @@ impl NetworkController {
             route_mgr,
             original_gateway: gateway,
             original_interface: interface,
+            original_if_index: if_index,
             tun_name,
             guard_ips: Vec::new(),
             bypass_cidrs,
@@ -210,6 +217,7 @@ impl NetworkController {
                 tun_name: self.tun_name.clone(),
                 original_gateway: self.original_gateway.to_string(),
                 original_interface: self.original_interface.clone(),
+                original_if_index: self.original_if_index,
                 guard_ips: self.guard_ips.clone(),
                 bypass_cidrs: self.bypass_cidrs.clone(),
                 dns_service_name: self.dns_service_name.clone(),
@@ -254,6 +262,11 @@ impl NetworkController {
     /// Get the original interface name (for caching across sessions).
     pub fn original_interface(&self) -> &str {
         &self.original_interface
+    }
+
+    /// Get the original interface index (for caching across sessions).
+    pub fn original_if_index(&self) -> u32 {
+        self.original_if_index
     }
 
     /// Get the current guard IPs (for caching across sessions).
@@ -373,6 +386,9 @@ impl NetworkController {
         if let Some(ip) = dns_ip {
             self.configure_dns(ip)?;
         } else if self.configured_dns_ip.is_none() {
+            // On Windows, DNS override is not supported (.onion blocked at API level,
+            // netsh changes fragile), so skip the hint message.
+            #[cfg(not(target_os = "windows"))]
             tracing::info!(
                 "System DNS unchanged (use --override-dns for .onion support in browsers)"
             );
@@ -558,31 +574,13 @@ impl NetworkController {
             );
         }
 
+        // Windows: DNS override intentionally not supported.
+        // .onion blocked at dnsapi.dll level (RFC 7686), netsh changes don't auto-revert
+        // on crash. Regular DNS goes through TUN → Tor without system DNS changes.
         #[cfg(target_os = "windows")]
         {
-            // Save original DNS on first call
-            if self.original_dns.is_none() {
-                self.original_dns = Some(dns::get_current_dns_windows(&self.tun_name)?);
-            }
-
-            run_cmd(
-                "netsh",
-                &[
-                    "interface",
-                    "ip",
-                    "set",
-                    "dns",
-                    &format!("name={}", self.tun_name),
-                    "static",
-                    dns_ip,
-                ],
-            )?;
-            self.dns_method = Some("netsh".to_string());
-            tracing::info!(
-                tun = %self.tun_name,
-                dns = dns_ip,
-                "DNS configured via netsh"
-            );
+            let _ = dns_ip; // suppress unused warning
+            tracing::debug!("DNS override skipped on Windows");
         }
 
         Ok(())
@@ -613,7 +611,7 @@ impl Drop for NetworkController {
 /// Detect the default gateway with retries.
 /// After route removal during session restart, the OS routing table may be
 /// momentarily empty. Retries up to 5 times with 1s delay.
-fn detect_default_gateway_with_retry() -> anyhow::Result<(IpAddr, String)> {
+fn detect_default_gateway_with_retry() -> anyhow::Result<(IpAddr, String, u32)> {
     let mut last_err = None;
     for attempt in 1..=5 {
         match detect_default_gateway() {
@@ -630,9 +628,10 @@ fn detect_default_gateway_with_retry() -> anyhow::Result<(IpAddr, String)> {
     Err(last_err.unwrap())
 }
 
-/// Detect the current default gateway and interface via `netdev` crate.
+/// Detect the current default gateway, interface name, and interface index via `netdev` crate.
 /// Uses native OS APIs (sysctl on macOS, netlink on Linux, IP Helper on Windows).
-fn detect_default_gateway() -> anyhow::Result<(IpAddr, String)> {
+/// The interface index is required on Windows where `CreateIpForwardEntry2` needs it.
+fn detect_default_gateway() -> anyhow::Result<(IpAddr, String, u32)> {
     let iface = netdev::interface::get_default_interface()
         .map_err(|e| anyhow::anyhow!("Failed to detect default interface: {e}"))?;
 
@@ -642,18 +641,41 @@ fn detect_default_gateway() -> anyhow::Result<(IpAddr, String)> {
         .and_then(|gw| gw.ipv4.first())
         .ok_or_else(|| anyhow::anyhow!("Could not detect default gateway"))?;
 
-    Ok((IpAddr::V4(*gateway_ip), iface.name))
+    Ok((IpAddr::V4(*gateway_ip), iface.name, iface.index))
 }
 
 // --- Route operations via route_manager crate (native OS APIs) ---
 
+/// Build a route through a gateway, including the interface index.
+/// On Windows, `CreateIpForwardEntry2` requires a valid `InterfaceIndex` —
+/// specifying only the gateway IP leaves `InterfaceIndex = 0` which fails
+/// with ERROR_FILE_NOT_FOUND (os error 2).
+fn build_gateway_route_with_index(
+    dest: IpAddr,
+    prefix: u8,
+    gateway: IpAddr,
+    if_index: u32,
+) -> Route {
+    let route = Route::new(dest, prefix).with_gateway(gateway);
+    if if_index > 0 {
+        route.with_if_index(if_index)
+    } else {
+        route
+    }
+}
+
 impl NetworkController {
+    /// Build a route through the original gateway with the correct interface index.
+    fn build_gateway_route(&self, dest: IpAddr, prefix: u8) -> Route {
+        build_gateway_route_with_index(dest, prefix, self.original_gateway, self.original_if_index)
+    }
+
     /// Add a host route for a guard IP through the original gateway.
     /// Uses /32 for IPv4, /128 for IPv6 (single-host prefix for each address family).
     /// Idempotent: removes any existing route first (handles kill-switch leftovers
     /// from a previous session where guard /32 routes were intentionally preserved).
     fn add_host_route(&mut self, ip: &IpAddr) -> anyhow::Result<()> {
-        let route = Route::new(*ip, host_prefix(ip)).with_gateway(self.original_gateway);
+        let route = self.build_gateway_route(*ip, host_prefix(ip));
         // Best-effort delete — may not exist (normal case) or may point to a
         // different gateway (network changed after wake). Either way, ignore errors.
         let _ = self.route_mgr.delete(&route);
@@ -666,7 +688,7 @@ impl NetworkController {
 
     /// Remove a host route (/32 for IPv4, /128 for IPv6).
     fn remove_host_route(&mut self, ip: &IpAddr) -> anyhow::Result<()> {
-        let route = Route::new(*ip, host_prefix(ip)).with_gateway(self.original_gateway);
+        let route = self.build_gateway_route(*ip, host_prefix(ip));
         self.route_mgr
             .delete(&route)
             .map_err(|e| anyhow::anyhow!("Failed to remove host route for {ip}: {e}"))?;
@@ -679,8 +701,7 @@ impl NetworkController {
         let parsed: cidr::IpCidr = cidr
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid CIDR '{cidr}': {e}"))?;
-        let route = Route::new(parsed.first_address(), parsed.network_length())
-            .with_gateway(self.original_gateway);
+        let route = self.build_gateway_route(parsed.first_address(), parsed.network_length());
         let _ = self.route_mgr.delete(&route);
         self.route_mgr
             .add(&route)
@@ -694,8 +715,7 @@ impl NetworkController {
         let parsed: cidr::IpCidr = cidr
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid CIDR '{cidr}': {e}"))?;
-        let route = Route::new(parsed.first_address(), parsed.network_length())
-            .with_gateway(self.original_gateway);
+        let route = self.build_gateway_route(parsed.first_address(), parsed.network_length());
         self.route_mgr
             .delete(&route)
             .map_err(|e| anyhow::anyhow!("Failed to remove CIDR route {cidr}: {e}"))?;
@@ -953,6 +973,7 @@ pub fn cleanup_routes(
     guard_ips: &[IpAddr],
     bypass_cidrs: &[String],
     original_gateway: IpAddr,
+    original_if_index: u32,
 ) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -983,8 +1004,12 @@ pub fn cleanup_routes(
     // Remove bypass CIDRs
     for cidr in bypass_cidrs {
         if let Ok(parsed) = cidr.parse::<cidr::IpCidr>() {
-            let route = Route::new(parsed.first_address(), parsed.network_length())
-                .with_gateway(original_gateway);
+            let route = build_gateway_route_with_index(
+                parsed.first_address(),
+                parsed.network_length(),
+                original_gateway,
+                original_if_index,
+            );
             if let Err(e) = route_mgr.delete(&route) {
                 errors.push(format!("bypass CIDR {cidr}: {e}"));
             }
@@ -995,7 +1020,12 @@ pub fn cleanup_routes(
 
     // Remove guard IP routes (/32 for IPv4, /128 for IPv6)
     for ip in guard_ips {
-        let route = Route::new(*ip, host_prefix(ip)).with_gateway(original_gateway);
+        let route = build_gateway_route_with_index(
+            *ip,
+            host_prefix(ip),
+            original_gateway,
+            original_if_index,
+        );
         if let Err(e) = route_mgr.delete(&route) {
             errors.push(format!("guard route {ip}: {e}"));
         }

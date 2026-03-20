@@ -12,6 +12,10 @@ pub struct VpnState {
     pub tun_name: String,
     pub original_gateway: String,
     pub original_interface: String,
+    /// Interface index of the original gateway interface.
+    /// Required on Windows for route_manager (CreateIpForwardEntry2 needs InterfaceIndex).
+    #[serde(default)]
+    pub original_if_index: u32,
     pub guard_ips: Vec<IpAddr>,
     pub bypass_cidrs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +252,7 @@ mod tests {
             tun_name: "utun7".to_string(),
             original_gateway: "192.168.1.1".to_string(),
             original_interface: "en0".to_string(),
+            original_if_index: 0,
             guard_ips: vec!["1.2.3.4".parse().unwrap(), "5.6.7.8".parse().unwrap()],
             bypass_cidrs: vec!["10.0.0.0/8".to_string()],
             dns_service_name: Some("Wi-Fi".to_string()),
@@ -282,6 +287,7 @@ mod tests {
             tun_name: "tun0".to_string(),
             original_gateway: "10.0.0.1".to_string(),
             original_interface: "eth0".to_string(),
+            original_if_index: 0,
             guard_ips: vec![],
             bypass_cidrs: vec![],
             dns_service_name: None,
@@ -322,6 +328,7 @@ mod tests {
             tun_name: "tun0".to_string(),
             original_gateway: "10.0.0.1".to_string(),
             original_interface: "eth0".to_string(),
+            original_if_index: 0,
             guard_ips: vec![],
             bypass_cidrs: vec![],
             dns_service_name: None,
@@ -396,6 +403,7 @@ mod tests {
             tun_name: "utun7".to_string(),
             original_gateway: "192.168.1.1".to_string(),
             original_interface: "en0".to_string(),
+            original_if_index: 0,
             guard_ips: vec!["1.2.3.4".parse().unwrap()],
             bypass_cidrs: vec![],
             dns_service_name: None,
@@ -429,6 +437,7 @@ mod tests {
             tun_name: "tun0".to_string(),
             original_gateway: "10.0.0.1".to_string(),
             original_interface: "eth0".to_string(),
+            original_if_index: 0,
             guard_ips: vec![],
             bypass_cidrs: vec![],
             dns_service_name: None,

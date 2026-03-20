@@ -50,6 +50,7 @@ pub fn cleanup_orphaned(path: &Path) -> anyhow::Result<bool> {
         &state.guard_ips,
         &state.bypass_cidrs,
         original_gateway,
+        state.original_if_index,
     );
 
     errors.extend(route_errors);
@@ -80,7 +81,7 @@ pub fn cleanup_orphaned(path: &Path) -> anyhow::Result<bool> {
 /// Returns `Ok(())` on success or if DNS was never configured (--keep-dns).
 /// Returns `Err` with a description if DNS restoration fails.
 pub fn restore_dns_if_ours(state: &VpnState) -> Result<(), String> {
-    let configured_ip = match &state.configured_dns_ip {
+    let _configured_ip = match &state.configured_dns_ip {
         Some(ip) => ip,
         None => return Ok(()), // --keep-dns was used, DNS was never modified
     };
@@ -106,7 +107,7 @@ pub fn restore_dns_if_ours(state: &VpnState) -> Result<(), String> {
                 if current
                     .trim()
                     .lines()
-                    .any(|l| l.trim() == configured_ip.as_str()) =>
+                    .any(|l| l.trim() == _configured_ip.as_str()) =>
             {
                 return do_restore(
                     state.dns_service_name.as_deref(),
@@ -135,7 +136,7 @@ pub fn restore_dns_if_ours(state: &VpnState) -> Result<(), String> {
         _ => {
             // Direct /etc/resolv.conf — verify our DNS is still active before overwriting
             let current = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
-            let expected_line = format!("nameserver {configured_ip}");
+            let expected_line = format!("nameserver {_configured_ip}");
             if current.trim().lines().any(|l| l.trim() == expected_line) {
                 return do_restore(None, state.original_dns.as_deref());
             } else {
@@ -145,12 +146,10 @@ pub fn restore_dns_if_ours(state: &VpnState) -> Result<(), String> {
         }
     }
 
-    // Windows: netsh does NOT auto-revert DNS when interface is removed.
-    // Always try to restore DNS during SIGKILL recovery.
+    // Windows: DNS override not used (disabled — .onion blocked at API level).
+    // Nothing to restore during SIGKILL recovery.
     #[cfg(target_os = "windows")]
-    if state.dns_method.as_deref() == Some("netsh") {
-        return do_restore(None, state.original_dns.as_deref());
-    }
+    let _ = &do_restore;
 
     #[allow(unreachable_code)]
     Ok(())
@@ -170,6 +169,7 @@ mod tests {
             tun_name: "tun0".to_string(),
             original_gateway: "10.0.0.1".to_string(),
             original_interface: "eth0".to_string(),
+            original_if_index: 0,
             guard_ips: vec![],
             bypass_cidrs: vec![],
             dns_service_name: None,

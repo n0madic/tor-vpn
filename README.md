@@ -47,7 +47,7 @@ Includes a **GUI application** (Tauri v2 + Svelte) for managing the daemon with 
 
 - **Transparent proxying** — all TCP traffic goes through Tor, no per-app configuration
 - **DNS leak protection** — all DNS queries (UDP and TCP) are intercepted and resolved through Tor
-- **`.onion` support** — access onion services from any application (e.g. `curl http://example.onion`)
+- **`.onion` support** — access onion services from any application, e.g. `curl http://example.onion` (macOS/Linux only — [blocked by Windows DNS Client](https://datatracker.ietf.org/doc/html/rfc7686))
 - **Stream isolation** — configurable per-connection, per-destination, or session-wide Tor circuit isolation
 - **Exit country selection** — choose which country your traffic appears to come from (`--exit-country DE`)
 - **Bridge support** — connect through Tor bridges for censorship circumvention (`--bridge`)
@@ -186,7 +186,7 @@ Run from an **Administrator** command prompt:
 
 ```powershell
 tor-vpn.exe start
-tor-vpn.exe start --override-dns --exit-country DE
+tor-vpn.exe start --exit-country DE
 tor-vpn.exe status     # no admin required
 tor-vpn.exe refresh    # no admin required
 tor-vpn.exe stop       # no admin required
@@ -274,7 +274,7 @@ ControlSocket /tmp/tor-vpn.sock
 | `--max-connections` | `TOR_VPN_MAX_CONNECTIONS` | `256` | Maximum concurrent TCP connections through Tor |
 | `--max-dns-queries` | `TOR_VPN_MAX_DNS_QUERIES` | `256` | Maximum concurrent DNS queries |
 | `--dns-cache-ttl` | `TOR_VPN_DNS_CACHE_TTL` | `900` | DNS cache TTL in seconds |
-| `--override-dns` | `TOR_VPN_OVERRIDE_DNS` | `false` | Override system DNS to prevent browser DoH |
+| `--override-dns` | `TOR_VPN_OVERRIDE_DNS` | `false` | Override system DNS to prevent browser DoH (macOS/Linux only) |
 | `--exit-country` | `TOR_VPN_EXIT_COUNTRY` | *(any)* | ISO 3166-1 alpha-2 country code for exit relay (e.g., `US`, `DE`) |
 | `--bridge` | `TOR_VPN_BRIDGE` | *(none)* | Tor bridge line(s) (repeatable, comma-separated via env) |
 | `--pt-path` | `TOR_VPN_PT_PATH` | *(none)* | Pluggable transport path: `TRANSPORT=PATH` (repeatable) |
@@ -306,15 +306,18 @@ In the GUI, click **New Identity** on the Dashboard (no password prompt needed).
 
 - **TCP only** — Tor does not support arbitrary UDP. Non-DNS UDP packets are dropped.
 - **IPv4 only** — IPv6 traffic is blocked (blackhole routes) to prevent leaks.
+- **No `.onion` on Windows** — Windows blocks `.onion` DNS queries at the OS level (RFC 7686). `.onion` works on macOS and Linux.
 - **No transparent authentication** — services that block Tor exit nodes will still block you.
 - **Performance** — traffic goes through the Tor network (3 relays), expect higher latency.
 
 ### Windows-Specific Notes
 
-- Routes via native Windows routing API (`route_manager` crate), DNS via `netsh`, guard detection via `netstat2` crate
+- Routes via native Windows routing API (`route_manager` crate with `InterfaceIndex`), guard detection via `netstat2` crate
 - IPC uses a named pipe (`\\.\pipe\tor-vpn`) — `stop`, `refresh`, and `status` work without Administrator
-- Unlike Unix, `netsh` DNS settings do NOT auto-revert when the TUN interface is removed — the `cleanup` command handles this
+- **`.onion` domains are not supported** — Windows DNS Client (`dnsapi.dll`) blocks `.onion` queries at the API level per [RFC 7686](https://datatracker.ietf.org/doc/html/rfc7686). This is a Windows OS limitation that cannot be worked around. Regular domains work fine through Tor
+- **`--override-dns` is disabled** — since `.onion` is blocked at the OS level, DNS override provides no benefit on Windows and is silently ignored. The UI disables the checkbox
 - State file stored in `%TEMP%\tor-vpn-state.json`
+- Requires [wintun.dll](https://www.wintun.net/) — place next to the executable, in System32, or anywhere on PATH
 
 ## Project Structure
 
