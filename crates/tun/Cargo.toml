@@ -1,0 +1,10 @@
+[package]
+name = "tun"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+config = { path = "../config" }
+tun-rs = { version = "2", features = ["async", "async_framed"] }
+anyhow = "1"
+tracing = "0.1"

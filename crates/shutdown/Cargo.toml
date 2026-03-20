@@ -1,0 +1,12 @@
+[package]
+name = "shutdown"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }

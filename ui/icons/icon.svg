@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7B4FBF"/>
+      <stop offset="100%" stop-color="#4A2D7A"/>
+    </linearGradient>
+    <linearGradient id="shieldBorder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A87FE0"/>
+      <stop offset="100%" stop-color="#6B3FA0"/>
+    </linearGradient>
+    <linearGradient id="onionGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E0D0F5"/>
+      <stop offset="100%" stop-color="#C8B0E8"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#1a0a2e" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Shield shape -->
+  <path d="M256 28
+    C256 28 440 70 440 70
+    C440 70 440 260 440 260
+    C440 380 340 460 256 492
+    C172 460 72 380 72 260
+    C72 260 72 70 72 70
+    C72 70 256 28 256 28Z"
+    fill="url(#shieldBorder)" filter="url(#shadow)"/>
+
+  <path d="M256 48
+    C256 48 420 86 420 86
+    C420 86 420 256 420 256
+    C420 368 328 442 256 472
+    C184 442 92 368 92 256
+    C92 256 92 86 92 86
+    C92 86 256 48 256 48Z"
+    fill="url(#shieldGrad)"/>
+
+  <!-- Onion layers (concentric arcs representing Tor layers) -->
+  <!-- Outer layer -->
+  <ellipse cx="256" cy="290" rx="120" ry="140" fill="none" stroke="url(#onionGrad)" stroke-width="8" opacity="0.4"
+    stroke-dasharray="0 140 440" transform="rotate(0, 256, 290)"/>
+
+  <!-- Onion body - stylized -->
+  <!-- Layer 3 (outermost) -->
+  <path d="M256 150
+    C310 150 356 210 356 290
+    C356 360 310 400 256 400
+    C202 400 156 360 156 290
+    C156 210 202 150 256 150Z"
+    fill="none" stroke="url(#onionGrad)" stroke-width="6" opacity="0.35"/>
+
+  <!-- Layer 2 -->
+  <path d="M256 180
+    C298 180 328 226 328 290
+    C328 346 298 378 256 378
+    C214 378 184 346 184 290
+    C184 226 214 180 256 180Z"
+    fill="none" stroke="url(#onionGrad)" stroke-width="6" opacity="0.55"/>
+
+  <!-- Layer 1 (inner) -->
+  <path d="M256 210
+    C284 210 304 242 304 290
+    C304 332 284 356 256 356
+    C228 356 208 332 208 290
+    C208 242 228 210 256 210Z"
+    fill="none" stroke="url(#onionGrad)" stroke-width="6" opacity="0.75"/>
+
+  <!-- Core -->
+  <ellipse cx="256" cy="290" rx="28" ry="36" fill="url(#onionGrad)" opacity="0.9"/>
+
+  <!-- Onion tip/sprout -->
+  <path d="M256 150
+    C256 150 248 120 256 100
+    C264 120 256 150 256 150Z"
+    fill="url(#onionGrad)" opacity="0.8"/>
+
+  <!-- Small connecting lines from tip -->
+  <path d="M252 148 C244 128 240 110 248 90" fill="none" stroke="url(#onionGrad)" stroke-width="3" opacity="0.5"/>
+  <path d="M260 148 C268 128 272 110 264 90" fill="none" stroke="url(#onionGrad)" stroke-width="3" opacity="0.5"/>
+
+  <!-- Network nodes (small dots around onion representing relay network) -->
+  <circle cx="160" cy="200" r="5" fill="#E0D0F5" opacity="0.6"/>
+  <circle cx="352" cy="200" r="5" fill="#E0D0F5" opacity="0.6"/>
+  <circle cx="140" cy="300" r="5" fill="#E0D0F5" opacity="0.6"/>
+  <circle cx="372" cy="300" r="5" fill="#E0D0F5" opacity="0.6"/>
+  <circle cx="175" cy="380" r="5" fill="#E0D0F5" opacity="0.6"/>
+  <circle cx="337" cy="380" r="5" fill="#E0D0F5" opacity="0.6"/>
+
+  <!-- Subtle connection lines between nodes -->
+  <line x1="160" y1="200" x2="184" y2="230" stroke="#E0D0F5" stroke-width="1.5" opacity="0.25"/>
+  <line x1="352" y1="200" x2="328" y2="230" stroke="#E0D0F5" stroke-width="1.5" opacity="0.25"/>
+  <line x1="140" y1="300" x2="172" y2="290" stroke="#E0D0F5" stroke-width="1.5" opacity="0.25"/>
+  <line x1="372" y1="300" x2="340" y2="290" stroke="#E0D0F5" stroke-width="1.5" opacity="0.25"/>
+</svg>

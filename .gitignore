@@ -1,0 +1,11 @@
+target/
+*.conf
+
+# UI frontend
+ui/frontend/node_modules/
+ui/frontend/dist/
+
+# Sidecar binaries (build artifacts)
+ui/binaries/tor-*
+
+ROADMAP.md

@@ -1,0 +1,14 @@
+[package]
+name = "netstack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+netstack-smoltcp = "0.2"
+tun-rs = { version = "2", features = ["async", "async_framed"] }
+bytes = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+anyhow = "1"
+tracing = "0.1"

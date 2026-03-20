@@ -1,0 +1,35 @@
+# Lima VM for tor-vpn integration testing on Linux (aarch64)
+# Usage:
+#   cross build --target aarch64-unknown-linux-gnu --release -p tor-vpn
+#   limactl create --name=tor-vpn lima/tor-vpn.yaml
+#   limactl start tor-vpn
+#   limactl copy target/aarch64-unknown-linux-gnu/release/tor-vpn tor-vpn:/tmp/tor-vpn
+#   limactl shell tor-vpn sudo /tmp/tor-vpn start
+#
+# Or run the full integration test:
+#   lima/test.sh
+
+arch: aarch64
+images:
+  - location: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+
+cpus: 2
+memory: 2GiB
+disk: 10GiB
+
+# TUN device requires /dev/net/tun inside the VM
+mounts:
+  - location: "~"
+    writable: false
+  - location: /tmp/lima
+    writable: true
+
+# Provision: install minimal dependencies for testing
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      apt-get update -qq
+      apt-get install -y -qq curl iproute2 dnsutils iputils-ping procps

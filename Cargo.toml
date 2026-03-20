@@ -1,0 +1,57 @@
+[workspace]
+members = ["crates/*", "ui"]
+resolver = "2"
+
+[package]
+name = "tor-vpn"
+version = "0.1.0"
+edition = "2021"
+description = "TUN-based transparent Tor VPN — route all traffic through Tor without SOCKS proxy"
+license = "MIT"
+
+[dependencies]
+# Internal crates
+state = { path = "crates/state" }
+config = { path = "crates/config" }
+bandwidth = { path = "crates/bandwidth" }
+shutdown = { path = "crates/shutdown" }
+tun = { path = "crates/tun" }
+netstack = { path = "crates/netstack" }
+tor = { path = "crates/tor" }
+routing = { path = "crates/routing" }
+dns = { path = "crates/dns" }
+tcp = { path = "crates/tcp" }
+ipc = { path = "crates/ipc" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
+time = { version = "0.3", features = ["macros"] }
+
+# Concurrent state (for CancellationToken)
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Cross-platform root/admin privilege check
+is-admin = "0.1"
+
+# Build SQLite from source for cross-compilation (no system libsqlite3 needed)
+libsqlite3-sys = { version = "0.36", features = ["bundled"] }
+
+# Unix: safe POSIX wrappers (signal sending, etc.)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+# Patch smoltcp to fix TCP sequence number underflow panic under heavy traffic
+# (smoltcp#1048, fixed in main but not yet released as 0.12.1+)
+#
+# Patch netstack-smoltcp to fix premature TCP close that truncates transfers.
+# (cavivie/netstack-smoltcp#X, fixed in main but not yet released as 0.2.1+)
+[patch.crates-io]
+smoltcp = { git = "https://github.com/smoltcp-rs/smoltcp", branch = "main" }
+netstack-smoltcp = { git = "https://github.com/cavivie/netstack-smoltcp", branch = "main" }

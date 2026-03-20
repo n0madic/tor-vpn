@@ -1,0 +1,17 @@
+[package]
+name = "tor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+config = { path = "../config" }
+arti-client = { version = "0.40", default-features = false, features = ["tokio", "rustls", "compression", "onion-service-client", "geoip", "pt-client"] }
+tor-rtcompat = { version = "0.40", features = ["tokio", "rustls"] }
+rustls = "0.23"
+tor-geoip = "0.40"
+moka = { version = "0.12", features = ["sync"] }
+which = "8"
+tokio = { version = "1", features = ["time", "sync"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
+anyhow = "1"
+tracing = "0.1"
